@@ -414,12 +414,14 @@ freq_notch_filter_options:
   # 'trim_frac/2' proportion of outliers will be removed from both tails of 
   # the distribution.
   trim_frac: num(min=0.0, required=False)
+  # RFI False alarm rate for spectra analysis frequency bins
+  false_alarm_rate: num(min=0.0, required=False)
   # If FDNF is applied, a threshold for pvalue needs to be selected. pvalue is a
   # measure of confidence against a null hypothesis. In FDNF:
   # Null Hypothesis: NO RFI, Alternative Hypothesis: RFI present
   # If p-value of the range-frequency power spectra is less than p-value threshold,
   # alternative hypothesis is accepted. Otherwise, null hypothesis is accepted.
-  pvalue_threshold: num(min=0.0, required=False)
+  #pvalue_threshold: num(min=0.0, required=False)
   # If FDNF is applied, the cumulative probability density function (CDF) 
   # of the input Time Stationary Narrowband (TSNB) and Time Varying Wideband 
   # (TVWB) masks will be compared with this threshold. It represents an estimate of 
@@ -434,6 +436,8 @@ freq_notch_filter_options:
   # This should be enabled unless for the purpose of debugging.
   # Defaults to True
   wb_detect: bool(required=False)
+  # Parameters used to adaptively determine RFI eigenvalue difference thresholds
+  threshold_hyperparameters_notch: include('rfi_threshold_options', required=False)
 
 rfi_threshold_options:
     # The computed sigma ratio of maximum and minimum Eigenvalue

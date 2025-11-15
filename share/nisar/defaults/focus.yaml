@@ -283,13 +283,15 @@ runconfig:
                     # computed, 'trim_frac/2' proportion of outliers will be removed from 
                     # both tails of the distribution.
                     trim_frac: 0.01
+                    # RFI False alarm rate for spectra analysis frequency bins
+                    false_alarm_rate: 1e-3
                     # If FDNF is applied, a threshold for pvalue needs to be selected. 
                     # pvalue is a measure of confidence against a null hypothesis. 
                     # In FDNF: Null Hypothesis: NO RFI, Alternative Hypothesis: RFI present
                     # If p-value of the range-frequency power spectra is less than p-value 
                     # threshold, alternative hypothesis is accepted. Otherwise, null hypothesis 
                     # is accepted.
-                    pvalue_threshold: 0.005
+                    # pvalue_threshold: 0.005
                     # If FDNF is applied, the cumulative probability density function (CDF)
                     # of the input Time Stationary Narrowband (TSNB) and Time Varying Wideband
                     # (TVWB) masks will be compared with this threshold. It represents 
@@ -304,6 +306,21 @@ runconfig:
                     # This should be enabled unless for the purpose of debugging.
                     # Defaults to True
                     wb_detect: True
+                    # Parameters used to adaptively determine RFI eigenvalue
+                    # # difference thresholds
+                    threshold_hyperparameters:
+                        # The computed sigma ratio of maximum and minimum Eigenvalue
+                        # first differences. It is a dimensionless figure of merit.
+                        # Larger value of x indicates higher likelihood of RFI
+                        # presence.
+                        x: [0.25, 5.0]
+                        # Estimated range of number of sigmas of the first
+                        # difference of minimum Eigenvalues across threshold block
+                        # as a function of input x, e.g., smaller x results in
+                        # larger value of y, therefore relaxing the final threshold.
+                        # The values of x outside of the defined range of y are
+                        # extrapolated.
+                        y: [6.0, 1]
 
             # Range filter parameters for mixed-mode cases.
             range_common_band_filter:
