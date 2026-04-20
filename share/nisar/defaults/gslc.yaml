@@ -368,8 +368,8 @@ runconfig:
                 # memory-mapped flat file(s), which speeds up repeat access.
                 # False to always read data directly from the input file.
                 # Generally, enabling caching should reduce runtime.
-                # Default: True
-                use_cache: true
+                # Default: False
+                use_cache: false
 
                 # True to delete the nested QA scratch directory in
                 # `scratch_path` and its contents when QA SAS is finished.
@@ -453,6 +453,17 @@ runconfig:
                     # -1 to indicate all rows / all columns (respectively).
                     # Default: (1024, 1024)
                     tile_shape: [1024, 1024]
+
+                    # True to output one grayscale PNG+KML pair per raster image layer; these
+                    # will be generated in addition to the standard browse image PNG+KML.
+                    # The filename of each additional file will include a suffix noting
+                    # that image's frequency and polarization.
+                    # False to have the primary browse image be the only PNG+KML generated.
+                    # Note: If True, and if the input granule contains only one image,
+                    # then the additional individual PNG will be a duplicate image to the
+                    # primary browse image PNG, but with more descriptive filename.
+                    # Default: False
+                    output_individual_pngs: false
 
                 histogram:
 

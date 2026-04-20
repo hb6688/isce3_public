@@ -349,6 +349,24 @@ runconfig:
                 # epoch.  null for automatic selection
                 time_end: null
 
+            # Calibration and processing information look-up tables (LUTs)
+            # excluding Doppler
+            lookup_tables:
+
+                # Downsampling factors with respect to the RSLC grid
+                downsampling_factor:
+                    # Downsampling factor in azimuth direction
+                    azimuth: 50
+                    # Downsampling factor in range direction
+                    range: 50
+
+                # Extra margin added to LUTs
+                margin_in_pixels:
+                    # Extra margin added to lookup table in azimuth, in pixels.
+                    azimuth: 11
+                    # Extra margin added to lookup table in range, in pixels.
+                    range: 11
+
             doppler:
                 # Offset between quaternion frame and antenna boresight in degrees.
                 # TBD This will likely be parameter in a separate cal file.
@@ -363,6 +381,13 @@ runconfig:
                     range: 2000.0
                     # Lookup table Azimuth spacing in s
                     azimuth: 1.0
+                
+                # Extra margin added to the Doppler LUT
+                margin_in_pixels:
+                    # Extra margin added to lookup table in azimuth, in pixels.
+                    azimuth: 11
+                    # Extra margin added to lookup table in range, in pixels.
+                    range: 11
 
             # Settings for range compression algorithm.
             rangecomp:
@@ -440,11 +465,42 @@ runconfig:
             # cal pulses.
             zero_fill_gaps: True
 
-            # If true, subtract the azimuth mean from the raw data, which is
-            # useful when the caltone is nearly constant in azimuth but not
-            # stationary in range.  Calculating the mean and subtracting it is
-            # done in blocks using rangecomp.block_size
-            nullify_azimuth_mean: True
+            valid_data_mask:
+                # Length in meters to divide the valid data polygon into before
+                # rasterization.  Ideally smaller than any changes in the
+                # location of the swath due to range timing updates.
+                polygon_segment_length: 50.0
+
+                # Number of pulses to ignore when calculating the valid data
+                # region at the end of a fixed-PRF observation.  This is
+                # relevant when a fixed-PRF observation is immediately followed
+                # by a dithered observation, as the dithered pulses in the air
+                # will overlap the last few receive windows of the fixed-PRF
+                # one.
+                num_ignore: 25
+
+            caltone:
+                # If "azimuth_mean", subtract the azimuth mean from the raw
+                # data, which is useful when the caltone is nearly constant in
+                # azimuth but not stationary in range.  Calculating the mean
+                # and subtracting it is done in blocks using
+                # rangecomp.block_size
+                # If "wavelet" then subtract an estimate that varies in 2D.
+                # No correction when "disabled".
+                # Option "auto" means "wavelet" if dithered else "azimuth_mean",
+                # which is a sensible default for NISAR LSAR.
+                # auto | wavelet | azimuth_mean | disabled
+                algorithm: auto
+
+                # Calibration tone frequency (RF) in Hz.
+                # NOTE Caltone frequency changed for most modes between mode
+                # table v50 and v51, which went into operations on
+                # 2025-10-17T00:00:00Z.  The v50 frequency is 1216.904297e6 Hz
+                # while the v51 frequency is 1214.882813e6 Hz.
+                frequency: 1214.882813e6
+
+                # Length of constant-overlap add (COLA) window.
+                wavelet_size: 64
 
             # Processing stage switches, mostly for debug.
             # Any missing stages assumed True
@@ -619,6 +675,17 @@ runconfig:
                     # -1 to indicate all rows / all columns (respectively).
                     # Default: (1024, 1024)
                     tile_shape: [1024, 1024]
+
+                    # True to output one grayscale PNG+KML pair per raster image layer; these
+                    # will be generated in addition to the standard browse image PNG+KML.
+                    # The filename of each additional file will include a suffix noting
+                    # that image's frequency and polarization.
+                    # False to have the primary browse image be the only PNG+KML generated.
+                    # Note: If True, and if the input granule contains only one image,
+                    # then the additional individual PNG will be a duplicate image to the
+                    # primary browse image PNG, but with more descriptive filename.
+                    # Default: False
+                    output_individual_pngs: false
 
                 histogram:
 
