@@ -4,7 +4,10 @@ from numpy.fft import fft, fftshift, ifft, ifftshift
 from numpy.random import randn, randint, uniform
 import numpy.testing as npt
 import pytest
-from isce3.signal.rfi_freq_null import run_freq_notch
+from isce3.signal.rfi_freq_null import (
+    run_freq_notch,
+    ThresholdParamsNotch
+)
 
 def gaussian_data_gen(num_pulses, num_rng_samples, pwr_db):
     """Generate normally distributed signals of desired input power.
@@ -258,9 +261,10 @@ def test_freq_null():
     num_samples_rng_blk = 700
     num_pulses_az_blk = 600
     trim_frac = 0.01
-    pvalue_threshold = 0.005
-    cdf_threshold = 0.68
-    use_entire_pulse = True
+    false_alarm_rate = 1e-3
+    cdf_threshold = 0.1
+    threshold_params_notch = ThresholdParamsNotch([0.25, 1, 3], [5, 4.5, 1.5])
+    use_entire_pulse = False
     nb_detect = True
     wb_detect = True
     mitigate_enable = True
@@ -274,9 +278,10 @@ def test_freq_null():
         az_winsize=az_winsize,
         rng_winsize=rng_winsize,
         trim_frac=trim_frac,
-        pvalue_threshold=pvalue_threshold,
         cdf_threshold=cdf_threshold,
         use_entire_pulse=use_entire_pulse,
+        false_alarm_rate=false_alarm_rate,
+        threshold_params_notch=threshold_params_notch,
         nb_detect=nb_detect,
         wb_detect=wb_detect,
         mitigate_enable=mitigate_enable,

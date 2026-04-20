@@ -1147,16 +1147,20 @@ def process_rfi(cfg: Struct, raw_data: np.ndarray,
             raw_data_mitigated=raw_data_mitigated)
     else:
         opt_fnf = opt.freq_notch_filter
+        threshold_params_notch = isce3.signal.rfi_freq_null.ThresholdParamsNotch(
+            opt_fnf.threshold_hyperparameters.x, opt_fnf.threshold_hyperparameters.y)
+
         rfi_likelihood = isce3.signal.rfi_freq_null.run_freq_notch(
             raw_data,
             opt_fnf.num_pulses_az,
-            num_rng_blks=opt.num_range_blocks,
+            num_samples_rng_blk=opt.num_samples_rng_blk,
             az_winsize=opt_fnf.az_winsize,
             rng_winsize=opt_fnf.rng_winsize,
             trim_frac=opt_fnf.trim_frac,
-            pvalue_threshold=opt_fnf.pvalue_threshold,
             cdf_threshold=opt_fnf.cdf_threshold,
             use_entire_pulse=opt.use_entire_pulse,
+            false_alarm_rate=opt_fnf.false_alarm_rate,
+            threshold_params_notch=threshold_params_notch,
             nb_detect=opt_fnf.nb_detect,
             wb_detect=opt_fnf.wb_detect,
             mitigate_enable=opt.mitigation_enabled,

@@ -7,9 +7,24 @@ from __future__ import annotations
 
 import numpy as np
 from scipy.fft import fft, ifft
+from scipy.stats import norm
 from numpy.polynomial import Polynomial
 from scipy import stats
 from collections.abc import Iterator
+from dataclasses import dataclass, field
+from typing import List
+
+@dataclass
+class ThresholdParamsNotch:
+    x: List[float] = field(default_factory=lambda: [0.25, 3])
+    y: List[float] = field(default_factory=lambda: [5.0, 1.5])
+
+    def __post_init__(self) -> None:
+        if len(self.x) != len(self.y):
+            raise ValueError("length mismatch: x and y must have the same size")
+        if len(self.x) < 2:
+            raise ValueError("At least two points are required")
+
 
 def overlap_slice_gen(total_size: int, batch_size: int, overlap: int=0) -> Iterator[slice]:
     """Generate slices with size defined by batch_size and number of 
@@ -66,9 +81,10 @@ def run_freq_notch(
     az_winsize: int = 256,
     rng_winsize: int = 100,
     trim_frac: float = 0.01,
-    pvalue_threshold: float = 0.005,
     cdf_threshold: float = 0.1,
     use_entire_pulse: bool = False,
+    false_alarm_rate: float = 1e-3,
+    threshold_params_notch: ThresholdParamsNotch = ThresholdParamsNotch(),
     nb_detect: bool = True,
     wb_detect: bool = True,
     mitigate_enable=False,
@@ -191,10 +207,11 @@ def run_freq_notch(
                 az_winsize=az_winsize,
                 rng_winsize=rng_winsize,
                 trim_frac=trim_frac,
-                pvalue_threshold=pvalue_threshold,
                 cdf_threshold=cdf_threshold,
+                false_alarm_rate=false_alarm_rate,
+                threshold_params_notch=threshold_params_notch,
                 nb_detect=nb_detect,
-                wb_detect=nb_detect,
+                wb_detect=wb_detect,
                 mitigate_enable=mitigate_enable,
                 raw_data_mitigated=raw_data_mitigated[blk_slow_time, blk_fast_time],
             )
@@ -214,8 +231,9 @@ def rfi_freq_notch(
     az_winsize=256,
     rng_winsize=100,
     trim_frac=0.01,
-    pvalue_threshold=0.005,
     cdf_threshold=0.1,
+    false_alarm_rate=1e-3,
+    threshold_params_notch: ThresholdParamsNotch = ThresholdParamsNotch(),
     nb_detect=True,
     wb_detect=True,
     mitigate_enable=False,
@@ -295,19 +313,49 @@ def rfi_freq_notch(
     raw_data_fft = fft(raw_data, axis=1)
     raw_data_freq_psd = np.abs(raw_data_fft)**2
 
+    # Compute Spectra Kurtosis
+    sk_rng_freq, num_pulses = compute_spectral_kurtosis(
+        raw_data_freq_psd
+    )
+        
+    # Derive a scalar figure of merit in terms of RFI severity
+    rfi_severity_block = sk_scalar_figure_merit(
+        sk_rng_freq,
+        num_pulses, 
+        false_alarm_rate,
+    )
+
+    # Estimate z-score threshold for each block
+    zsocre_threshold_block = estimate_zscore_threshold(
+        rfi_severity_block,
+        threshold_params_notch=threshold_params_notch,    
+    )
+    
+    # ---- INSERT DEBUG PRINT HERE ----
+    #print(f"[DEBUG] SK severity={rfi_severity_block:.4f}, "
+    #    f"z-threshold={zsocre_threshold_block:.3f}, "
+    #    f"num_pulses={num_pulses}"
+    #)
+
     # Enable narrowband RFI detection
     if nb_detect:
         mask_tsnb = detect_rfi_tsnb(
             raw_data_freq_psd, 
-            az_winsize, 
-            pvalue_threshold
+            az_winsize=az_winsize, 
+            zscore_threshold=zsocre_threshold_block,
+            trim_frac=trim_frac,
         )
     else:
         mask_tsnb = np.zeros(raw_data_fft.shape, dtype=np.int32)
 
     # Enable wideband RFI detection
     if wb_detect:
-        mask_tvwb = detect_rfi_tvwb(raw_data_freq_psd, rng_winsize, pvalue_threshold)
+        mask_tvwb = detect_rfi_tvwb(
+            raw_data_freq_psd, 
+            rng_winsize=rng_winsize, 
+            zscore_threshold=zsocre_threshold_block,
+            trim_frac=trim_frac
+        )
     else:
         mask_tvwb = np.zeros(raw_data_fft.shape, dtype=np.int32) # image mask
 
@@ -375,11 +423,60 @@ def trim_mean_and_std(a, trim_frac=0.01, axis=0):
 
     return trim_mean, trim_std
 
+def compute_spectral_kurtosis(
+    raw_data_freq_psd: np.ndarray,
+):
+    eps = 1e-12
+    num_pulses = raw_data_freq_psd.shape[0]
+
+    # Sum over pulses, per bin
+    s1 = raw_data_freq_psd.sum(axis=0)
+    denom = np.maximum(s1**2, eps)
+
+    # sum of squares over pulses, per bin              
+    s2 = (raw_data_freq_psd**2).sum(axis=0)
+    
+    sk_biased = ((num_pulses + 1.0) / (num_pulses - 1.0)) * (num_pulses * s2 / denom - 1.0)
+    
+    # Center to zero-mean under Gaussian
+    sk = sk_biased - 1
+
+    return sk, num_pulses
+
+def sk_scalar_figure_merit(
+    sk: np.ndarray,
+    num_pulses: int, 
+    false_alarm_rate: float = 1e-3
+) -> float:
+    
+    """Scalar figure of merit from SK (CVaR above Gaussian null)."""
+    std_dev = np.sqrt(4.0 / num_pulses)
+    tau = norm.isf(false_alarm_rate/2.0) * std_dev   # threshold for exceedances
+    tail = np.abs(sk)[np.abs(sk) > tau]
+
+    if tail.size == 0:
+        rfi_severity = 0
+    else:
+        rfi_severity = np.mean(tail)
+
+    return rfi_severity
+
+def estimate_zscore_threshold(
+    rfi_severity,
+    threshold_params_notch: ThresholdParamsNotch = ThresholdParamsNotch(),    
+):
+    zscore_threshold = np.interp(
+        rfi_severity, 
+        threshold_params_notch.x, 
+        threshold_params_notch.y
+    )
+
+    return zscore_threshold
 
 def detect_rfi_tsnb(
     raw_data_fft_psd, 
     az_winsize=256, 
-    pvalue_threshold=0.005,
+    zscore_threshold=2.0,
     trim_frac=0.01
 ):
     """Estimate Time-Stationary Narrowband (TSNB) frequency domain RFI mask.
@@ -426,22 +523,28 @@ def detect_rfi_tsnb(
     tsnb_hits_buffer = np.zeros((az_winsize, num_rng_samples), dtype=np.int32)
     mask_tsnb = np.zeros((num_pulses, num_rng_samples), dtype=np.int32)
 
+    raw_data_fft_psd_cs = np.cumsum(raw_data_fft_psd, axis=0, dtype=np.float64)
+    raw_data_fft_psd_cs = np.vstack([
+        np.zeros((1, num_rng_samples), dtype=raw_data_fft_psd_cs.dtype),
+        raw_data_fft_psd_cs
+    ])
+
+    # moving average over azimuth windows
+    avg_az = (
+        raw_data_fft_psd_cs[az_winsize:] - raw_data_fft_psd_cs[:-az_winsize]
+    ) / az_winsize
+
     for i in range(num_pulses - az_winsize + 1):
-        az_block = raw_data_fft_psd[i : i + az_winsize]
-        avg_az_time = np.mean(az_block, axis=0)  # Average in Azimuth time
+        avg_az_time = avg_az[i, :]   # shape = [num_rng_samples]
 
         #compute Z-Scores of data which indicates the number of
         #standard deviations a data value lies from the mean
         mu, sigma = trim_mean_and_std(avg_az_time, trim_frac, axis=0)
+        sigma = max(sigma, 1e-12)
         zscores = (avg_az_time - mu) / sigma
 
-        # Convert Z-Scores to one-tailed P-Values
-        pvalues = stats.norm.sf(zscores)
-        
-        # Isolate significant values (p < threshold) and convert to ints
-        # The results are significant (alternative hypothesis is True) if
-        # p < threshold and vice versa.
-        rfi_hit_tsnb = (pvalues < pvalue_threshold).astype(int)
+        rfi_hit_tsnb = (zscores > zscore_threshold).astype(int)
+
         tsnb_hits_buffer += rfi_hit_tsnb  # Add RFI hits to overall mask
 
         count = i % az_winsize
@@ -455,7 +558,7 @@ def detect_rfi_tsnb(
 def detect_rfi_tvwb(
     raw_data_fft_psd, 
     rng_winsize=100, 
-    pvalue_threshold=0.005, 
+    zscore_threshold=2.0, 
     trim_frac=0.01
 ):
     """Estimate Time-Varying Wideband (TVWB) frequency-domain RFI mask.
@@ -498,8 +601,14 @@ def detect_rfi_tvwb(
     if (rng_winsize >  num_rng_samples):
         raise ValueError(f'Range window size shall be equal to or less than {num_rng_samples}.')
 
-    # Transposing to match TSNB Block code
-    raw_data_fft_psd = np.transpose(raw_data_fft_psd)
+    # --- FAST sliding window average over range (axis=1) ---
+    # cs[:, k] = sum of raw_data_fft_psd[:, 0:k]
+    raw_data_fft_psd_cs = np.cumsum(raw_data_fft_psd, axis=1, dtype=np.float64)
+
+    # pad a zero column on the left for correct indexing
+    raw_data_fft_psd_cs = np.hstack([np.zeros((num_pulses, 1), dtype=raw_data_fft_psd_cs.dtype), raw_data_fft_psd_cs])
+
+    avg_rng = (raw_data_fft_psd_cs[:, rng_winsize:] - raw_data_fft_psd_cs[:, :-rng_winsize]) / rng_winsize
 
     # TVWB hit mask
     tvwb_hits_buffer = np.zeros((rng_winsize, num_pulses), dtype=np.int32)
@@ -507,8 +616,7 @@ def detect_rfi_tvwb(
     x = np.arange(num_pulses)
 
     for i in range(num_rng_samples - rng_winsize + 1):
-        rng_block = raw_data_fft_psd[i : i + rng_winsize]
-        avg_rng_freq = np.mean(rng_block, axis=0) # Average in range frequency
+        avg_rng_freq = avg_rng[:, i]   # shape = [num_pulses]
 
         # In Meyer's paper, detrending is applied to linear-scale averaged power 
         # spectra. However, in the code below, linear-scale averaged power spectra 
@@ -517,7 +625,7 @@ def detect_rfi_tvwb(
         # with respect to log-scale averaged power spectra due to extremely large difference
         # in power between RFI and signal in linear-scale averaged power spectra.
 
-        avg_rng_freq_db = np.log10(avg_rng_freq)  # Convert to log-space
+        avg_rng_freq_db = np.log10(np.maximum(avg_rng_freq, 1e-12))  # Convert to log-space
 
         # Generate numpy function with best-fit linear coeffs
         pfit = Polynomial.fit(x, avg_rng_freq_db, 1)
@@ -526,14 +634,10 @@ def detect_rfi_tvwb(
         avg_rng_freq_db -= pfit(x)
 
         mu, sigma = trim_mean_and_std(avg_rng_freq_db, trim_frac, axis=0)
+        sigma = max(sigma, 1e-12)
         zscores = (avg_rng_freq_db - mu) / sigma
 
-        # Isolate significant values (p < threshold) and convert to ints
-        # The results are significant (alternative hypothesis is True) if
-        # p < alpha and vice versa.
-        pvalues = stats.norm.sf(zscores)
-
-        rfi_hit_tvwb = (pvalues < pvalue_threshold).astype(int)
+        rfi_hit_tvwb = (zscores > zscore_threshold).astype(int)
         tvwb_hits_buffer += rfi_hit_tvwb
 
         count = i % rng_winsize
